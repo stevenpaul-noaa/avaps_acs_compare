@@ -11,6 +11,8 @@ THRESHOLDS = {
     'AVAPS - ACS Humidity': 5.0,         # %
     'AVAPS - ACS WindSpeed': 1.0,        # m/s
     'AVAPS - ACS WindDirection': 1.0     # degrees
+    'AVAPS - ACS U': 1.0,                # m/s (East-West)
+    'AVAPS - ACS V': 1.0                 # m/s (North-South)
 }
 
 def analyze_file(csv_path, global_data):
