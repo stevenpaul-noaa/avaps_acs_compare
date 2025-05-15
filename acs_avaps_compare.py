@@ -7,7 +7,7 @@ import re
 from netCDF4 import Dataset
 import numpy.ma as ma
 from datetime import datetime, timedelta
-
+import math
 
 def extract_launch_time(filename):
     # Matches pattern like AR2025-20250223N1-01-20250223T203707-5.nc
@@ -44,8 +44,9 @@ def find_d_file(directory, launch_time):
 def compare_data(netcdf_file, d_file, launch_time):
     # Placeholder for comparison logic between NetCDF and D files
     print(f"Comparing {netcdf_file} with {d_file}")
-    # open .nd file
+    # open .nc file
     dataset = Dataset(netcdf_file, 'r')
+
     #gpsutctime: milliseconds since 1970-01-01 23:40:14 +0000 UTC
     #sampletime: milliseconds since 2025-02-20 23:39:35.207027 +0000 UTC
     gpsutctime_start_str=dataset.groups['Profile'].variables['GpsUtcTime'].units
@@ -85,15 +86,34 @@ def compare_data(netcdf_file, d_file, launch_time):
         for line in file:
             #not a data line
             if line.startswith('AVAPS-T'):
-                #not an end of drop paramater line
-                if line.count(':') > 0:
-                    label,value=line.split(":",1)
-                    if label.count('Launch Time') > 0:
-                        avaps_launchdetect=value.strip().replace(", ","T")+"Z"
-                        #print(value)
-                    elif label.count('Sonde ID') > 0:
-                        value=int(value.strip().split(",")[0])
-                        #print(value)
+                # Not an end-of-drop parameter line
+                if ':' in line:
+                    label, value = line.split(":", 1)
+                    label = label.strip()
+                    value = value.strip()
+
+                    if 'Launch Time' in label:
+                        # Convert "YYYY-MM-DD, HH:MM:SS" to "YYYY-MM-DDTHH:MM:SSZ"
+                        avaps_launchdetect = value.replace(", ", "T") + "Z"
+                        print(f"Launch Time: {avaps_launchdetect} ")
+
+                    elif 'Sonde ID' in label:
+                        try:
+                            # AVAPS Sonde ID might look like "240324593, Model: LMS6"
+                            avaps_sonde_id = int(value.split(",")[0])
+                            print(f"Sonde ID: {avaps_sonde_id} ")
+                        except ValueError:
+                            print(f"Warning: Could not parse Sonde ID from line: {line}")
+
+                    elif 'Sonde Baseline Errors' in label:
+                        try:
+                            pressure_str = value.split(",")[0].strip()  # e.g., "-0.7 mb"
+                            avaps_press_offset = float(pressure_str.replace("mb", "").strip())
+                            print(f"Pressure Offset: {avaps_press_offset}")
+                        except ValueError:
+                            print(f"Warning: Could not parse Pressure Offset from line: {line}")
+
+
 
             #data line
             elif line.startswith('AVAPS-D'):
@@ -237,6 +257,38 @@ def compare_data(netcdf_file, d_file, launch_time):
         else:
             write_val(f, None)
 
+    # Wind component comparison
+    def append_wind_component(f, tt, component):
+        # component should be 'u' or 'v'
+        avaps_spd = avaps_sounding[tt].get("WindSpeed") if tt in avaps_sounding else None
+        avaps_dir = avaps_sounding[tt].get("WindDirection") if tt in avaps_sounding else None
+        acs_spd   = acs_sounding[tt].get("WindSpeed")   if tt in acs_sounding else None
+        acs_dir   = acs_sounding[tt].get("WindDirection")   if tt in acs_sounding else None
+
+        avaps_u, avaps_v = wind_to_uv(avaps_spd, avaps_dir)
+        acs_u, acs_v     = wind_to_uv(acs_spd, acs_dir)
+
+        if component == 'u':
+            avaps_val = avaps_u
+            acs_val   = acs_u
+        else:
+            avaps_val = avaps_v
+            acs_val   = acs_v
+
+        if acs_val is not None:
+            acs_val_rnd = round_digits(acs_val, 2)
+        else:
+            acs_val_rnd = None
+
+        write_val(f, avaps_val)
+        write_val(f, acs_val)
+        write_val(f, acs_val_rnd)
+        if ( avaps_val is not None ) and (acs_val_rnd is not None):
+            write_val(f, avaps_val - acs_val_rnd)
+        else:
+            write_val(f, None)
+
+
 
     # Define subdirectory
     output_dir = "processed"
@@ -256,6 +308,8 @@ def compare_data(netcdf_file, d_file, launch_time):
     f.write('AVAPS rel_hum,ACS Humidity,ACS Rounded Humidity,AVAPS - ACS Humidity,'      )
     f.write('AVAPS wind_dir,ACS WindDirection,ACS Rounded WindDirection,AVAPS - ACS WindDirection,' )
     f.write('AVAPS wind_spd,ACS WindSpeed,ACS Rounded WindSpeed,AVAPS - ACS WindSpeed,'     )
+    f.write('AVAPS u_comp,ACS U_Component,ACS Rounded U,AVAPS - ACS U,')
+    f.write('AVAPS v_comp,ACS V_Component,ACS Rounded V,AVAPS - ACS V,')
     #f.write('AVAPS vert_vel,ACS GpsDzDt,ACS Rounded GpsDzDt,AVAPS - ACS GpsDzDt,'       )
     #f.write('AVAPS vert_vel,ACS PDzDt,ACS Rounded PDzDt,AVAPS - ACS PDzDt,'         )
     #f.write('AVAPS gps_long,ACS Longitude,ACS Rounded Longitude,AVAPS - ACS Longitude,'     )
@@ -320,6 +374,8 @@ def compare_data(netcdf_file, d_file, launch_time):
         append_output(f, tt, 'Humidity',      'Humidity',       2)
         append_output(f, tt, 'WindDirection',     'WindDirection',  2)
         append_output(f, tt, 'WindSpeed',     'WindSpeed',      2)
+        append_wind_component(f, tt, 'u')
+        append_wind_component(f, tt, 'v')
         #append_output(f, 'vert_vel',     'GpsDzDt',        2)
         #append_output(f, 'vert_vel',     'PDzDt',          2)
         #append_output(f, 'gps_lon',      'Longitude',      6)
@@ -333,6 +389,37 @@ def compare_data(netcdf_file, d_file, launch_time):
 
 
 
+def get_sonde_id_from_netcdf(nc_dataset):
+    return nc_dataset.getncattr("SerialNumber")
+
+def get_sonde_id_from_dfile(d_file_path):
+    with open(d_file_path, 'r') as f:
+        for line in f:
+            if line.startswith("AVAPS-T01 COM Sonde ID/Type/Rev/Built/Sensors:"):
+                parts = line.split(":")[1].strip().split(",")
+                return parts[0].strip()
+    return None
+
+def get_pressure_offset_from_netcdf(nc_dataset):
+    return nc_dataset.getncattr("DropPressureAddition")
+
+
+def get_pressure_offset_from_dfile(d_file_path):
+    with open(d_file_path, 'r') as f:
+        for line in f:
+            if line.startswith("AVAPS-T01 COM Sonde Baseline Errors (p,t,h1,h2):"):
+                parts = line.split(":")[1].strip().split(",")
+                pressure_str = parts[0].strip().replace("mb", "").strip()
+                return float(pressure_str)
+    return None
+
+def wind_to_uv(speed, direction_deg):
+    if speed is None or direction_deg is None:
+        return (None, None)
+    direction_rad = math.radians(direction_deg)
+    u = -speed * math.sin(direction_rad)  # East-West component (positive = wind from west)
+    v = -speed * math.cos(direction_rad)  # North-South component (positive = wind from south)
+    return u, v
 
 
 
@@ -356,7 +443,7 @@ def main():
     for file in netcdf_files:
         launch_time = extract_launch_time(os.path.basename(file))
         d_file = find_d_file(directory, launch_time)
-        print(f"  {file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
+        print(f"{file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
 
         if d_file:
             compare_data(file, d_file, launch_time)
