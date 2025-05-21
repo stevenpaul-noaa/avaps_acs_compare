@@ -9,8 +9,8 @@ THRESHOLDS = {
     'AVAPS - ACS Pressure': 1.0,         # hPa
     'AVAPS - ACS Temperature': 0.2,      # °C
     'AVAPS - ACS Humidity': 5.0,         # %
-    'AVAPS - ACS WindSpeed': 1.0,        # m/s
-    'AVAPS - ACS WindDirection': 1.0     # degrees
+    #'AVAPS - ACS WindSpeed': 1.0,        # m/s
+    #'AVAPS - ACS WindDirection': 1.0,     # degrees
     'AVAPS - ACS U': 1.0,                # m/s (East-West)
     'AVAPS - ACS V': 1.0                 # m/s (North-South)
 }
@@ -78,7 +78,8 @@ def process_directory(directory):
     global_data = defaultdict(list)
     summary_output = []
 
-    for csv_file in csv_files:
+    for i, csv_file in enumerate(csv_files, start=1):
+        print(f"Processing file {i} of {len(csv_files)}: {os.path.basename(csv_file)}")
         file_summary = analyze_file(csv_file, global_data)
         summary_output.append(file_summary)
 
