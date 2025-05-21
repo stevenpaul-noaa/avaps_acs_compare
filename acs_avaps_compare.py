@@ -43,7 +43,7 @@ def find_d_file(directory, launch_time):
 
 def compare_data(netcdf_file, d_file, launch_time):
     # Placeholder for comparison logic between NetCDF and D files
-    print(f"Comparing {netcdf_file} with {d_file}")
+    #print(f"Comparing {netcdf_file} with {d_file}")
     # open .nc file
     dataset = Dataset(netcdf_file, 'r')
 
@@ -95,13 +95,13 @@ def compare_data(netcdf_file, d_file, launch_time):
                     if 'Launch Time' in label:
                         # Convert "YYYY-MM-DD, HH:MM:SS" to "YYYY-MM-DDTHH:MM:SSZ"
                         avaps_launchdetect = value.replace(", ", "T") + "Z"
-                        print(f"Launch Time: {avaps_launchdetect} ")
+                        #print(f"Launch Time: {avaps_launchdetect} ")
 
                     elif 'Sonde ID' in label:
                         try:
                             # AVAPS Sonde ID might look like "240324593, Model: LMS6"
                             avaps_sonde_id = int(value.split(",")[0])
-                            print(f"Sonde ID: {avaps_sonde_id} ")
+                            #print(f"Sonde ID: {avaps_sonde_id} ")
                         except ValueError:
                             print(f"Warning: Could not parse Sonde ID from line: {line}")
 
@@ -109,7 +109,7 @@ def compare_data(netcdf_file, d_file, launch_time):
                         try:
                             pressure_str = value.split(",")[0].strip()  # e.g., "-0.7 mb"
                             avaps_press_offset = float(pressure_str.replace("mb", "").strip())
-                            print(f"Pressure Offset: {avaps_press_offset}")
+                            #print(f"Pressure Offset: {avaps_press_offset}")
                         except ValueError:
                             print(f"Warning: Could not parse Pressure Offset from line: {line}")
 
@@ -439,11 +439,13 @@ def main():
 
     # Find all NetCDF files in the directory
     netcdf_files = glob.glob(os.path.join(directory, "*.nc"))
+    total_files = len(netcdf_files)
     print(f"Found {len(netcdf_files)} NetCDF files:")
-    for file in netcdf_files:
+    for i, file in enumerate(netcdf_files, start=1):
+        print(f"Processing file {i} of {total_files}: {os.path.basename(file)}")
         launch_time = extract_launch_time(os.path.basename(file))
         d_file = find_d_file(directory, launch_time)
-        print(f"{file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
+        #print(f"{file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
 
         if d_file:
             compare_data(file, d_file, launch_time)
