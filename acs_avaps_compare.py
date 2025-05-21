@@ -438,14 +438,15 @@ def main():
         return
 
     # Find all NetCDF files in the directory
-    netcdf_files = glob.glob(os.path.join(directory, "*.nc"))
+    netcdf_files = glob.glob(os.path.join(directory, "**", "*.nc"), recursive=True)
     total_files = len(netcdf_files)
     print(f"Found {len(netcdf_files)} NetCDF files:")
     for i, file in enumerate(netcdf_files, start=1):
         print(f"Processing file {i} of {total_files}: {os.path.basename(file)}")
         launch_time = extract_launch_time(os.path.basename(file))
-        d_file = find_d_file(directory, launch_time)
-        #print(f"{file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
+        file_dir = os.path.dirname(file)
+        d_file = find_d_file(file_dir, launch_time)
+        print(f"{file} -> Launch time: {launch_time} -> D file: {d_file if d_file else 'NOT FOUND'}")
 
         if d_file:
             compare_data(file, d_file, launch_time)
