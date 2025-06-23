@@ -2,7 +2,7 @@ import os
 import re
 import csv
 import sys
-import time
+
 
 def extract_xxaa_block(file_path):
     with open(file_path, 'r') as f:
@@ -24,95 +24,142 @@ def extract_xxaa_block(file_path):
 
     return block
 
-def decode_group(group):
+
+def safe_int(s):
     try:
-        pressure_code = group[:2]
-        height = int(group[2:])
-        pressure_map = {
-            "00": 1000, "92": 925, "85": 850, "70": 700,
-            "50": 500, "40": 400, "30": 300, "25": 250
-        }
-        pressure = pressure_map.get(pressure_code, None)
-        return (pressure, height)
+        return int(s)
     except:
-        return (None, None)
-
-def decode_temp_dew(group):
-    try:
-        temp = int(group[:3]) / 10.0
-        dew = int(group[3:]) / 10.0
-        return (temp, dew)
-    except:
-        return (None, None)
-
-def decode_wind(group):
-    try:
-        dir = int(group[:3])
-        spd = int(group[3:])
-        return (dir, spd)
-    except:
-        return (None, None)
-
-def extract_drop_time(filename):
-    # Try both AR2025-20250123N1-06-20250123T203710-5.WMO and D20250123_203710_P.WMO formats
-    match1 = re.search(r'(\d{8})[T_](\d{6})', filename)
-    if match1:
-        return f"{match1.group(1)}_{match1.group(2)}"
-    return None
-
-def decode_xxaa_block(block):
-    data = ' '.join(block)
-    chunks = re.findall(r'\d{5}', data)
-
-    if len(chunks) < 1:
         return None
 
-    meta = chunks.pop(0)
+
+def safe_float(s):
     try:
-        day_of_month = int(meta[:2]) % 50
+        return float(s)
+    except:
+        return None
+
+
+def decode_group(group):
+    pressure_map = {
+        "00": 1000, "92": 925, "85": 850, "70": 700,
+        "50": 500, "40": 400, "30": 300, "25": 250
+    }
+    if len(group) != 5 or not group[:2].isdigit():
+        return (None, None)
+    code = group[:2]
+    height_str = group[2:]
+    pressure = pressure_map.get(code)
+    height = safe_int(height_str)
+    if pressure in [1000] and height is not None and height >= 500:
+        height = -1*(height-500)  # Convert values over 500 to negative height
+    return (pressure, height)
+
+
+def decode_temp_dew(group):
+    if len(group) != 5 or group == "/////":
+        return (None, None)
+    temp_str = group[:3]
+    dew_str = group[3:]
+    if "///" in temp_str or "///" in dew_str:
+        return (None, None)
+    temp = safe_int(temp_str)
+    dew = safe_int(dew_str)
+    if temp is None or dew is None:
+        return (None, None)
+    return (temp / 10.0, dew / 10.0)
+
+
+def decode_wind(group):
+    if len(group) < 4 or "///" in group:
+        return (None, None)
+    dir_str = group[:3]
+    spd_str = group[3:]
+    dir_ = safe_int(dir_str)
+    spd = safe_int(spd_str)
+    return (dir_, spd)
+
+
+def decode_surface_group(groups):
+    if len(groups) < 3:
+        return (None, None, None, None, None)
+    p_group, td_group, wind_group = groups[:3]
+    if len(p_group) != 5 or not p_group.startswith("99"):
+        return (None, None, None, None, None)
+    pressure = safe_int(p_group[2:])
+    if pressure is None:
+        return (None, None, None, None, None)
+    temp, dew = decode_temp_dew(td_group)
+    wdir, wspd = decode_wind(wind_group)
+    return (pressure, temp, dew, wdir, wspd)
+
+
+def extract_drop_time(filename):
+    m = re.search(r'(\d{8})[T_](\d{6})', filename)
+    if m:
+        return f"{m.group(1)}_{m.group(2)}"
+    return ""
+
+
+def decode_xxaa_block(block):
+    data_str = ' '.join(block)
+    groups = re.findall(r'(?:\d{5}|/{5})', data_str)
+    if not groups:
+        return None
+
+    meta = groups.pop(0)
+    day_of_month = hour_gmt = wind_indicator = None
+    try:
+        day_of_month = int(meta[:2])
+        if day_of_month > 50:
+            day_of_month -= 50
         hour_gmt = int(meta[2:4])
         wind_indicator = int(meta[4])
     except:
-        day_of_month = hour_gmt = wind_indicator = None
+        pass
 
     lat = lon = marsden = units = None
-    if chunks and chunks[0].startswith("99"):
+    if groups and groups[0].startswith("99"):
         try:
-            pos1 = chunks.pop(0)
-            pos2 = chunks.pop(0)
-            lat = int(pos1[2:]) / 10.0
-            octant = int(pos2[0])
-            lon = int(pos2[1:]) / 10.0
-            pos3 = chunks.pop(0)
-            marsden = int(pos3[:3])
-            units = int(pos3[3:])
+            pos1 = groups.pop(0)
+            pos2 = groups.pop(0)
+            pos3 = groups.pop(0)
+            lat = safe_int(pos1[2:]) / 10.0
+            lon = safe_int(pos2[1:]) / 10.0
+            marsden = safe_int(pos3[:3])
+            units = safe_int(pos3[3:])
         except:
             lat = lon = marsden = units = None
 
-    pressure_data = {}
-    surface_pressure_key = None
+    surface_pressure = surface_temp = surface_dew = surface_wind_dir = surface_wind_spd = None
+    if groups and groups[0].startswith("99"):
+        surface_data = decode_surface_group(groups[:3])
+        if surface_data[0] is not None:
+            surface_pressure, surface_temp, surface_dew, surface_wind_dir, surface_wind_spd = surface_data
+        groups = groups[3:]
 
-    if chunks and chunks[0].startswith("99"):
-        try:
-            surface = chunks.pop(0)
-            surface_pressure = int(surface[2:])
-            surface_pressure_key = f"SFC_{surface_pressure}"
-            temp_dew = chunks.pop(0)
-            wind = chunks.pop(0)
-            temp, dew_dep = decode_temp_dew(temp_dew)
-            wind_dir, wind_spd = decode_wind(wind)
-            pressure_data[surface_pressure_key] = (None, temp, dew_dep, wind_dir, wind_spd)
-        except:
-            pass
+    pressure_map = {
+        "00": 1000, "92": 925, "85": 850, "70": 700,
+        "50": 500, "40": 400, "30": 300, "25": 250
+    }
+    levels = {v: {'height': None, 'temp': None, 'dewpt': None, 'wind_dir': None, 'wind_spd': None} for v in pressure_map.values()}
 
-    for i in range(0, len(chunks), 3):
-        group = chunks[i:i+3]
-        if len(group) == 3:
-            pressure, height = decode_group(group[0])
-            temp, dew_dep = decode_temp_dew(group[1])
-            wind_dir, wind_spd = decode_wind(group[2])
-            if pressure:
-                pressure_data[pressure] = (height, temp, dew_dep, wind_dir, wind_spd)
+    for i in range(0, len(groups), 3):
+        level_groups = groups[i:i+3]
+        if len(level_groups) < 3:
+            break
+        pcode, tempdew, wind = level_groups
+        pressure, height = decode_group(pcode)
+        if pressure is None:
+            continue
+        temp, dew = decode_temp_dew(tempdew)
+        wdir, wspd = decode_wind(wind)
+        levels[pressure] = {
+            'height': height,
+            'temp': temp,
+            'dewpt': dew,
+            'wind_dir': wdir,
+            'wind_spd': wspd
+        }
 
     result = {
         'day_of_month': day_of_month,
@@ -122,57 +169,67 @@ def decode_xxaa_block(block):
         'longitude': lon,
         'marsden': marsden,
         'units': units,
+        'surface_pressure_mb': surface_pressure,
+        'surface_temp_C': surface_temp,
+        'surface_dewpt_dep_C': surface_dew,
+        'surface_wind_dir_deg': surface_wind_dir,
+        'surface_wind_spd_kt': surface_wind_spd
     }
 
-    if surface_pressure_key and surface_pressure_key in pressure_data:
-        vals = pressure_data[surface_pressure_key]
-        result[f"surface_pressure_mb"] = int(surface_pressure_key.split('_')[1])
-        result[f"surface_temp_C"] = vals[1]
-        result[f"surface_dewpt_dep_C"] = vals[2]
-        result[f"surface_wind_dir_deg"] = vals[3]
-        result[f"surface_wind_spd_kt"] = vals[4]
+    for p in sorted(levels.keys(), reverse=True):
+        vals = levels[p]
+        result[f"{p}_height_m"] = vals['height']
+        result[f"{p}_temp_C"] = vals['temp']
+        result[f"{p}_dewpt_dep_C"] = vals['dewpt']
+        result[f"{p}_wind_dir_deg"] = vals['wind_dir']
+        result[f"{p}_wind_spd_kt"] = vals['wind_spd']
 
-    for p in [1000, 925, 850, 700, 500, 400, 300, 250]:
-        vals = pressure_data.get(p, (None, None, None, None, None))
-        result[f"{p}_height_m"] = vals[0]
-        result[f"{p}_temp_C"] = vals[1]
-        result[f"{p}_dewpt_dep_C"] = vals[2]
-        result[f"{p}_wind_dir_deg"] = vals[3]
-        result[f"{p}_wind_spd_kt"] = vals[4]
     return result
+
 
 def decode_directory_to_csv(directory, output_csv="decoded_xxaa.csv"):
     files = [f for f in os.listdir(directory) if f.endswith(".WMO")]
     total_files = len(files)
     print(f"Found {total_files} files for processing.")
     records = []
-    max_filename_length = max((len(f) for f in files), default=0)
+    max_filename_len = max((len(f) for f in files), default=0)
+
     for i, f in enumerate(files, 1):
-        print(f"\rProcessing file {i} of {total_files}: {f.ljust(max_filename_length)}", end='', flush=True)
+        print(f"\rProcessing file {i} of {total_files}: {f.ljust(max_filename_len)}", end='', flush=True)
         file_path = os.path.join(directory, f)
         block = extract_xxaa_block(file_path)
-        if block:
-            decoded = decode_xxaa_block(block)
-            if decoded:
-                decoded['filename'] = f
-                decoded['drop_time'] = extract_drop_time(f)
-                records.append(decoded)
+        if not block:
+            continue
+        decoded = decode_xxaa_block(block)
+        if decoded:
+            decoded['filename'] = f
+            decoded['drop_time'] = extract_drop_time(f)
+            records.append(decoded)
+
     print()
-    if records:
-        fieldnames = ['filename', 'drop_time', 'day_of_month', 'hour_gmt', 'wind_indicator', 'latitude', 'longitude', 'marsden', 'units',
-                      'surface_pressure_mb', 'surface_temp_C', 'surface_dewpt_dep_C', 'surface_wind_dir_deg', 'surface_wind_spd_kt']
-        for p in [1000, 925, 850, 700, 500, 400, 300, 250]:
-            fieldnames += [
-                f"{p}_height_m", f"{p}_temp_C", f"{p}_dewpt_dep_C",
-                f"{p}_wind_dir_deg", f"{p}_wind_spd_kt"
-            ]
-        with open(output_csv, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(records)
-        print(f"Wrote {len(records)} lines to {output_csv}.")
-    else:
+    if not records:
         print("No XXAA data decoded.")
+        return
+
+    fieldnames = [
+        'filename', 'drop_time', 'day_of_month', 'hour_gmt', 'wind_indicator',
+        'latitude', 'longitude', 'marsden', 'units',
+        'surface_pressure_mb', 'surface_temp_C', 'surface_dewpt_dep_C',
+        'surface_wind_dir_deg', 'surface_wind_spd_kt'
+    ]
+    for p in sorted([1000, 925, 850, 700, 500, 400, 300, 250], reverse=True):
+        fieldnames.extend([
+            f"{p}_height_m", f"{p}_temp_C", f"{p}_dewpt_dep_C",
+            f"{p}_wind_dir_deg", f"{p}_wind_spd_kt"
+        ])
+
+    with open(output_csv, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    print(f"Wrote {len(records)} lines to {output_csv}.")
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
